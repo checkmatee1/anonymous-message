@@ -71,7 +71,8 @@ check_port() {
 # 获取占用端口的进程信息
 get_port_process() {
     local port=$1
-    lsof -i:$port -t 2>/dev/null | head -1
+    # 跳过标题行，获取第一个数据行，提取数字（PID）
+    lsof -i:$port 2>/dev/null | awk 'NR==2 {for(i=1;i<=NF;i++) if($i~/^[0-9]+$/) {print $i; exit}}'
 }
 
 # 通过 PID 文件检查进程是否运行
@@ -260,29 +261,43 @@ start_frontend() {
     
     print_info "启动前端服务 (端口: $FRONTEND_PORT)..."
     
-    cd frontend
+    cd "$SCRIPT_DIR/frontend"
     
     # 使用 vite preview 作为静态服务器
     if command -v pnpm &> /dev/null; then
         nohup pnpm preview --host 0.0.0.0 --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
+        local shell_pid=$!
     else
         nohup npm run preview -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$FRONTEND_LOG" 2>&1 &
+        local shell_pid=$!
     fi
     
-    local frontend_pid=$!
-    echo "$frontend_pid" > "$FRONTEND_PID_FILE"
+    cd "$SCRIPT_DIR"
     
-    cd ..
+    # 等待服务启动并获取实际 PID
+    local count=0
+    local frontend_pid=""
+    while [ $count -lt 10 ]; do
+        sleep 0.5
+        if check_port $FRONTEND_PORT; then
+            frontend_pid=$(get_port_process $FRONTEND_PORT)
+            if [ -n "$frontend_pid" ]; then
+                break
+            fi
+        fi
+        count=$((count + 1))
+    done
     
-    sleep 2
-    
-    if check_port $FRONTEND_PORT; then
+    # 保存 PID（保存实际监听端口的进程或 shell PID）
+    if [ -n "$frontend_pid" ]; then
+        echo "$frontend_pid" > "$FRONTEND_PID_FILE"
         print_info "前端服务启动成功 (PID: $frontend_pid)"
         print_info "  地址: http://0.0.0.0:$FRONTEND_PORT"
         return 0
     else
+        # 保存 shell PID 作为备用
+        echo "$shell_pid" > "$FRONTEND_PID_FILE"
         print_error "前端服务启动失败，请查看日志: $FRONTEND_LOG"
-        rm -f "$FRONTEND_PID_FILE"
         return 1
     fi
 }
@@ -321,16 +336,23 @@ stop_frontend() {
     # 1. 通过 PID 文件停止
     if [ -f "$FRONTEND_PID_FILE" ]; then
         local pid=$(cat "$FRONTEND_PID_FILE")
-        kill_process "$pid" "前端服务"
+        if [ -n "$pid" ]; then
+            kill_process "$pid" "前端服务"
+        fi
         rm -f "$FRONTEND_PID_FILE"
     fi
     
-    # 2. 检查端口是否释放
+    # 2. 杀死所有 vite preview 相关进程
+    pkill -f "vite preview" 2>/dev/null || true
+    
+    # 3. 检查端口是否释放
     sleep 1
     if check_port $FRONTEND_PORT; then
         local pid=$(get_port_process $FRONTEND_PORT)
-        print_warn "端口 $FRONTEND_PORT 仍被占用，强制停止 (PID: $pid)"
-        kill -9 "$pid" 2>/dev/null || true
+        if [ -n "$pid" ]; then
+            print_warn "端口 $FRONTEND_PORT 仍被占用，强制停止 (PID: $pid)"
+            kill -9 "$pid" 2>/dev/null || true
+        fi
     fi
     
     print_info "前端服务已停止"
@@ -433,24 +455,31 @@ show_help() {
     echo "用法: $0 <命令> [参数]"
     echo ""
     echo "命令:"
-    echo "  start       启动所有服务 (生产模式)"
-    echo "  stop        停止所有服务"
-    echo "  restart     重启所有服务"
-    echo "  status      查看服务状态"
-    echo "  build       仅构建前端"
-    echo "  backend     仅启动后端"
-    echo "  frontend    仅启动前端"
-    echo "  logs [n]    查看最近 n 行日志 (默认 50)"
-    echo "  clean       清理 PID 和日志文件"
-    echo "  help        显示此帮助信息"
+    echo "  start          启动所有服务 (自动启动监控)"
+    echo "  stop           停止所有服务 (自动停止监控)"
+    echo "  restart        重启所有服务 (自动重启监控)"
+    echo "  status         查看服务状态"
+    echo "  build          仅构建前端"
+    echo "  backend        仅启动后端"
+    echo "  frontend       仅启动前端"
+    echo "  logs [n]       查看最近 n 行日志 (默认 50)"
+    echo "  monitor        手动启动服务监控守护进程"
+    echo "  stop-monitor   手动停止监控守护进程"
+    echo "  clean          清理 PID 和日志文件"
+    echo "  help           显示此帮助信息"
     echo ""
     echo "配置:"
     echo "  所有配置项在 backend/.env 文件中"
     echo "  参考 backend/.env.example"
     echo ""
+    echo "说明:"
+    echo "  - start/restart 会自动启动监控守护进程 (每分钟检测)"
+    echo "  - stop 会自动停止监控守护进程"
+    echo "  - 监控会自动重启挂掉的服务"
+    echo ""
     echo "示例:"
-    echo "  $0 start           # 启动所有服务"
-    echo "  $0 stop            # 停止所有服务"
+    echo "  $0 start           # 启动所有服务并开启监控"
+    echo "  $0 stop            # 停止所有服务和监控"
     echo "  $0 logs 100        # 查看最近 100 行日志"
     echo ""
 }
@@ -459,23 +488,77 @@ show_help() {
 # 主命令
 # ============================================
 
+# ============================================
+# 服务监控守护进程
+# ============================================
+
+monitor() {
+    print_info "启动服务监控守护进程..."
+    
+    # 检查是否已有监控进程在运行
+    if pgrep -f "bash.*deploy.sh.*monitor-daemon" > /dev/null; then
+        print_warn "监控守护进程已在运行"
+        return 0
+    fi
+    
+    # 后台启动监控守护进程
+    nohup "$0" monitor-daemon > /dev/null 2>&1 &
+    local monitor_pid=$!
+    
+    print_info "监控守护进程已启动 (PID: $monitor_pid)"
+    print_info "  检测间隔: 1 分钟"
+    print_info "  停止监控: pkill -f 'deploy.sh.*monitor-daemon'"
+}
+
+monitor_daemon() {
+    # 这是内部守护进程，不对外显示
+    while true; do
+        sleep 60  # 每分钟检测一次
+        
+        # 检查后端
+        if ! check_port $PORT; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 后端服务已停止，尝试重启..." >> "$BACKEND_LOG"
+            cd "$SCRIPT_DIR"
+            source backend/.venv/bin/activate 2>/dev/null
+            start_backend >> "$BACKEND_LOG" 2>&1
+        fi
+        
+        # 检查前端
+        if ! check_port $FRONTEND_PORT; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 前端服务已停止，尝试重启..." >> "$FRONTEND_LOG"
+            cd "$SCRIPT_DIR"
+            start_frontend >> "$FRONTEND_LOG" 2>&1
+        fi
+    done
+}
+
+stop_monitor() {
+    print_info "停止监控守护进程..."
+    pkill -f "bash.*deploy.sh.*monitor-daemon" 2>/dev/null || true
+    print_info "监控守护进程已停止"
+}
+
 case "$1" in
     start)
         install_deps
         start_backend
         start_frontend
+        monitor  # 自动启动监控
         echo ""
         status
         ;;
     stop)
+        stop_monitor  # 停止监控
         stop_all
         ;;
     restart)
+        stop_monitor  # 先停止监控
         stop_all
         sleep 2
         install_deps
         start_backend
         start_frontend
+        monitor  # 重新启动监控
         echo ""
         status
         ;;
@@ -499,6 +582,16 @@ case "$1" in
         ;;
     clean)
         clean
+        ;;
+    monitor)
+        monitor
+        ;;
+    monitor-daemon)
+        # 内部命令，用于守护进程
+        monitor_daemon
+        ;;
+    stop-monitor)
+        stop_monitor
         ;;
     help|--help|-h)
         show_help
