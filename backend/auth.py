@@ -4,6 +4,7 @@ Admin 认证模块
 - 自动续期机制
 """
 import jwt
+import secrets
 from datetime import datetime, timedelta
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -106,4 +107,4 @@ def verify_admin_credentials(username: str, password: str) -> bool:
     if username != settings.ADMIN_USERNAME:
         return False
     # 简单对比密码（生产环境建议使用哈希存储）
-    return password == settings.ADMIN_PASSWORD
+    return secrets.compare_digest(password.encode(), settings.ADMIN_PASSWORD.encode())

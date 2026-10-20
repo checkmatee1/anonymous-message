@@ -11,7 +11,8 @@ import os
 app = FastAPI(
     title="QA Box API",
     description="匿名提问箱后端服务",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None, redoc_url=None, openapi_url=None
 )
 
 # CORS configuration
@@ -31,7 +32,7 @@ app.add_middleware(LogMiddleware)
 if not os.path.exists(settings.UPLOAD_DIR):
     os.makedirs(settings.UPLOAD_DIR)
     
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR, html=False), name="uploads")
+
 app.include_router(router, prefix="/api")
 
 
@@ -40,6 +41,10 @@ async def startup():
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Preserve messages created before optional sender names were added.
+        columns = await conn.exec_driver_sql("PRAGMA table_info(questions)")
+        if "sender_name" not in {row[1] for row in columns}:
+            await conn.exec_driver_sql("ALTER TABLE questions ADD COLUMN sender_name VARCHAR(40)")
     
     # 启动时创建一次备份（仅在数据库有变化时）
     backup_manager.create_backup(force=False)

@@ -69,3 +69,7 @@ frontend/dist/
 # ============================================
 .DS_Store
 Thumbs.db
+
+# Local browser acceptance artifacts
+.playwright-cli/
+output/

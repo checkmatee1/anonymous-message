@@ -30,7 +30,6 @@ class LogMiddleware(BaseHTTPMiddleware):
         log_msg = (
             f"{request.method} {request.url.path} "
             f"- {response.status_code} "
-            f"- {request.client.host} "
             f"- {process_time:.4f}s"
         )
         

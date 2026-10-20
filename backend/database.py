@@ -5,7 +5,7 @@ from .config import settings
 # SQLite specific configuration
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=True,
+    echo=False,
     connect_args={"check_same_thread": False}  # SQLite specific
 )
 
