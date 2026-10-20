@@ -38,6 +38,10 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 settings = Settings()
+if settings.ADMIN_PASSWORD == "change-this-password" or len(settings.ADMIN_PASSWORD) < 16:
+    raise RuntimeError("Set a unique ADMIN_PASSWORD of at least 16 characters")
+if settings.SECRET_KEY.startswith("your-secret-key") or len(settings.SECRET_KEY) < 32:
+    raise RuntimeError("Set a unique SECRET_KEY of at least 32 characters")
 
 # Ensure directories exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)

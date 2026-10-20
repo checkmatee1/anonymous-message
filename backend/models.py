@@ -26,6 +26,7 @@ class Question(Base):
     __tablename__ = "questions"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    sender_name = Column(String(40), nullable=True)
     content = Column(Text, nullable=False)  # Rich text content
     images = Column(JSONType, default=lambda: [])  # List of image URLs/paths
     

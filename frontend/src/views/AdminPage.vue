@@ -115,6 +115,7 @@
                   <div class="text-sm text-gray-900 line-clamp-2 max-w-md cursor-pointer hover:text-blue-600" @click="viewDetail(q)">
                     {{ q.content }}
                   </div>
+                  <div class="text-xs text-gray-500 mt-1">From: {{ q.sender_name || '匿名朋友' }}</div>
                   <div v-if="q.is_answered" class="text-xs text-gray-500 mt-1 line-clamp-1">
                     回答: {{ q.answer_content }}
                   </div>
@@ -250,7 +251,7 @@
         <div class="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
           <!-- Question Display -->
           <div class="mb-6 p-4 bg-gray-50 rounded-lg">
-            <div class="text-sm text-gray-500 mb-2">问题内容</div>
+            <div class="text-sm text-gray-500 mb-2">From: {{ currentQuestion.sender_name || '匿名朋友' }}</div>
             <div class="text-gray-900 whitespace-pre-wrap">{{ currentQuestion.content }}</div>
             <div v-if="currentQuestion.images && currentQuestion.images.length" class="flex gap-2 mt-3">
               <img 
@@ -275,34 +276,10 @@
               autofocus
             ></textarea>
             
-             <!-- Image Upload for Answer -->
-            <div class="mb-3">
-                <div class="flex flex-wrap gap-2 mb-2">
-                  <div v-for="(img, index) in currentAnswerImages" :key="index" class="relative group">
-                    <img :src="img" class="w-20 h-20 object-cover rounded border border-gray-200" />
-                    <button @click="removeAnswerImage(index)" class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                  </div>
-                  <label class="w-20 h-20 border-2 border-dashed border-gray-300 rounded flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
-                    <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
-                    <span class="text-xs text-gray-500 mt-1">添加图片</span>
-                    <input type="file" class="hidden" accept="image/*" @change="handleAnswerImageUpload" multiple />
-                  </label>
-                </div>
-            </div>
-
             <div class="flex items-center justify-between">
                 <div class="text-xs text-gray-400">{{ currentAnswer?.length || 0 }} 字</div>
                 
-                <!-- Is Public Toggle -->
-                <div class="flex items-center gap-2">
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" v-model="currentIsPublic" class="sr-only peer">
-                      <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                      <span class="ml-2 text-sm font-medium text-gray-700">公开回答</span>
-                    </label>
-                </div>
+                <span class="text-sm text-gray-500">所有留言和备注仅管理员可见</span>
             </div>
           </div>
         </div>
@@ -330,7 +307,7 @@
       <div class="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden">
         <div class="p-6 border-b border-gray-200">
           <div class="flex justify-between items-center">
-            <h3 class="text-lg font-bold text-gray-900">问题详情</h3>
+            <h3 class="text-lg font-bold text-gray-900">留言详情 · {{ currentQuestion.sender_name || '匿名朋友' }}</h3>
             <button @click="closeDetailModal" class="text-gray-400 hover:text-gray-600 transition-colors">
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -709,8 +686,14 @@ const formatDate = (dateStr) => {
 
 const loadQuestions = async () => {
   try {
-    const res = await questionApi.getQuestions()
-    questions.value = res.data
+    const allQuestions = new Map()
+    const batchSize = 100
+    for (let skip = 0; ; skip += batchSize) {
+      const { data } = await questionApi.getQuestions(skip, batchSize)
+      for (const question of data) allQuestions.set(question.id, question)
+      if (data.length < batchSize) break
+    }
+    questions.value = [...allQuestions.values()]
   } catch (err) {
     console.error(err)
   }
@@ -721,7 +704,7 @@ const openAnswerModal = (question) => {
   // 如果已回答，预填充原答案
   currentAnswer.value = question.is_answered ? question.answer_content : ''
   currentAnswerImages.value = question.answer_images || []
-  currentIsPublic.value = question.is_answered ? question.is_public : true
+  currentIsPublic.value = false
   showAnswerModal.value = true
 }
 

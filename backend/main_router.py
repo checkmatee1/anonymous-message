@@ -34,47 +34,9 @@ def decode_jwt_token(token: str):
 # ============================================
 # 公共接口 (无需鉴权)
 # ============================================
-@router.post("/upload", response_model=dict)
-async def upload_image(
-    file: UploadFile = File(...),
-    authorization: Optional[str] = Header(None)
-):
-    """上传图片 - 按周分文件夹存储
-    
-    普通用户限制: 10MB/张
-    Admin用户: 无限制
-    """
-    # Check if user is admin
-    is_admin = False
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.replace("Bearer ", "")
-        try:
-            payload = jwt.decode(token, config.settings.SECRET_KEY, algorithms=[config.settings.ALGORITHM])
-            if payload.get("role") == "admin":
-                is_admin = True
-        except jwt.PyJWTError:
-            pass
-    
-    # File size validation for non-admin users
-    MAX_SIZE = 10 * 1024 * 1024  # 10MB
-    if not is_admin:
-        # Read file size
-        file.file.seek(0, 2)  # Seek to end
-        file_size = file.file.tell()
-        file.file.seek(0)  # Reset to beginning
-        
-        if file_size > MAX_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail=f"文件大小超过限制（最大10MB），当前: {file_size / 1024 / 1024:.1f}MB"
-            )
-    
-    file_path, url_path = get_upload_path(file.filename)
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    return {"url": url_path}
+@router.post("/upload")
+async def upload_image():
+    raise HTTPException(status_code=403, detail="此私密留言箱仅支持文字留言")
 
 
 @router.post("/questions", response_model=schemas.Token)
@@ -92,7 +54,7 @@ async def create_question(question: schemas.QuestionCreate, db: AsyncSession = D
 
 
 @router.get("/questions/{question_id}", response_model=schemas.QuestionOut)
-async def get_question(question_id: str, db: AsyncSession = Depends(database.get_db)):
+async def get_question(question_id: str, db: AsyncSession = Depends(database.get_db), admin: dict = Depends(get_current_admin)):
     """获取单个问题详情"""
     result = await db.execute(select(models.Question).where(models.Question.id == question_id))
     question = result.scalars().first()
@@ -126,19 +88,11 @@ async def revoke_question(revoke_data: schemas.RevokeRequest, db: AsyncSession =
 @router.get("/public/questions", response_model=List[schemas.QuestionOut])
 async def list_public_questions(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(database.get_db)):
     """获取公开的已回答问题列表"""
-    result = await db.execute(
-        select(models.Question)
-        .where(models.Question.is_answered == True)
-        .where(models.Question.is_public == True)
-        .order_by(models.Question.answered_at.desc())
-        .offset(skip)
-        .limit(limit)
-    )
-    return result.scalars().all()
+    return []
 
 
 @router.post("/questions/batch", response_model=List[schemas.QuestionOut])
-async def get_questions_batch(question_ids: List[str], db: AsyncSession = Depends(database.get_db)):
+async def get_questions_batch(question_ids: List[str], db: AsyncSession = Depends(database.get_db), admin: dict = Depends(get_current_admin)):
     """批量获取问题状态 (用于前端刷新我的问题列表)
     
     注意: 已删除的问题不会在结果中返回，前端需要处理这种情况
@@ -227,7 +181,7 @@ async def admin_update_question(
         raise HTTPException(status_code=404, detail="Question not found")
     
     if update_data.is_public is not None:
-        question.is_public = update_data.is_public
+        question.is_public = False
     if update_data.is_answered is not None:
         question.is_answered = update_data.is_answered
         
@@ -256,7 +210,7 @@ async def admin_answer_question(
     question.answer_content = answer.answer_content
     question.answer_images = answer.answer_images
     question.is_answered = True
-    question.is_public = answer.is_public
+    question.is_public = False
     question.answered_at = datetime.utcnow()
     
     await db.commit()

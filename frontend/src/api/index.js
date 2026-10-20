@@ -51,8 +51,8 @@ export const questionApi = {
         return request.post(`${ADMIN_API_PREFIX}/verify`)
     },
 
-    getQuestions() {
-        return request.get(`${ADMIN_API_PREFIX}/questions`)
+    getQuestions(skip = 0, limit = 100) {
+        return request.get(`${ADMIN_API_PREFIX}/questions`, { params: { skip, limit } })
     },
     
     updateQuestion(id, data) {

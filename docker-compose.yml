@@ -1,0 +1,49 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/qa_box.db
+      UPLOAD_DIR: /data/uploads
+      BACKUP_DIR: /data/backups
+      ADMIN_ROUTE_PREFIX: /admin
+      CORS_ORIGINS: https://message.xjcpp.love
+    volumes:
+      - message-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+    logging:
+      options:
+        max-size: 5m
+        max-file: '2'
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:3002:80
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1/health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      options:
+        max-size: 5m
+        max-file: '2'
+volumes:
+  message-data:
